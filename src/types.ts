@@ -4,26 +4,30 @@
  */
 
 export interface DocumentFile {
-  id: string;
+  key: string;
+  label: string;
   name: string;
   type: string;
-  data: string;
-  key?: string;
+  data: string; // Base64 or Text representation
+  url?: string;
+  uploadedAt: string;
+  status: 'uploaded' | 'verified';
 }
 
 export interface RecycleBinItem {
   id: string;
-  sourceType: string;
+  sourceType: 'employee_doc' | 'finance_doc' | 'attendance_log';
   title: string;
-  fileName: string;
-  fileType: string;
-  fileData: string;
+  fileName?: string;
+  fileType?: string;
+  fileData?: string;
   deletedAt: string;
   originalPath: {
     employeeId?: string;
     docKey?: string;
+    financeId?: string;
     attendanceId?: string;
-    logData?: string;
+    logData?: string; // Stringified original object
   };
 }
 
@@ -33,15 +37,15 @@ export interface FinanceRecord {
   title: string;
   amount: number;
   date: string;
-  category: string;
+  category: string; // e.g., 'office maintenance', 'general'
   notes?: string;
   fileName?: string;
   fileType?: string;
-  fileData?: string;
+  fileData?: string; // Base64 data of attached bill
 }
 
 export interface Employee {
-  id: string;
+  id: string; // Employee ID Card numeric, e.g. "MSPL-EMP-101"
   role?: 'employee' | 'manager' | 'md' | 'director';
   name: string;
   status: 'approved' | 'pending' | 'revoked';
@@ -49,7 +53,8 @@ export interface Employee {
   avatarUrl?: string;
   phoneNumber?: string;
   password?: string;
-  esic?: string;
+  // Employee profile uploads / data fields
+  esic?: string; // Approved/Uploaded status or info text
   epfo?: string;
   aadhar?: string;
   pan?: string;
@@ -66,10 +71,12 @@ export interface Employee {
     casual: number;
     sick: number;
     annual: number;
-    documents?: string[];
   };
+  // Dynamic document uploads
   uploadedFilesList?: DocumentFile[];
-  panKycStatus?: string;
+  // Optional extended shapes used by HR UI
+  documents?: { [key: string]: DocumentFile };
+  salaryConfig?: { basic: number; allowances: number; deductions: number };
 }
 
 export interface InventoryItem {
@@ -100,8 +107,16 @@ export interface AttendanceLog {
   employeeName: string;
   date: string;
   time: string;
-  latitude: number;
-  longitude: number;
+  selfieUrl?: string;
+  latitude?: number;
+  longitude?: number;
+  isManualOverride: boolean;
+  overrideBy?: string;
+  // Optional extended fields used by HR UI
+  punchIn?: string;
+  punchOut?: string;
+  status?: string;
+  coordinates?: string;
 }
 
 export interface Payslip {
@@ -121,14 +136,14 @@ export interface PayslipFormat {
   companyAddress: string;
   logoUrl: string;
   authorizedSignatory: string;
-  themeColor: string;
+  themeColor: string; // e.g. indigo, emerald, amber, slate, rose
   notes: string;
 }
 
 export interface HrUser {
-  id: string;
-  password?: string;
+  id?: string;
   phoneNumber: string;
+  password?: string;
   verified: boolean;
   isParentVerified: boolean;
 }
@@ -138,14 +153,17 @@ export interface EmployeeHelpQuery {
   employeeId: string;
   employeeName: string;
   projectName: string;
-  priority: 'normal' | 'urgent';
+  priority: 'normal' | 'urgent' | 'High';
   queryText: string;
+  // Legacy / alternate UI fields
+  issueDescription?: string;
+  reportedBy?: string;
+  timestamp?: string;
   attachment?: string | null;
   submittedAt: string;
   hrResponse?: string;
   hrRespondedAt?: string;
   status: 'pending' | 'resolved';
-  onUpdateEmployeeQueries?: (queries: EmployeeHelpQuery[]) => void;
 }
 
 export interface ProjectFile {
