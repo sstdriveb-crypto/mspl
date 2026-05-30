@@ -11,9 +11,8 @@ import {
   MapPin, Eye, Camera, ShieldAlert, Award, FileText, ClipboardList, TrendingUp, Settings, Trash, CheckCircle, Check,
   Upload, HelpCircle
 } from 'lucide-react';
-import { RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth';
+import { supabase } from '../lib/supabaseClient';
 import DocumentViewer from './DocumentViewer';
-import { auth } from '../lib/firebase';
 import { generatePayslipPDF } from '../lib/pdfHelper';
 import { formatIndiaPhoneNumber, normalizeIndiaPhoneForFirebase, sanitizeIndiaMobileDigits } from '../lib/phoneHelper';
 import { db } from '../lib/firebase';
@@ -74,9 +73,6 @@ export default function HrPortal({
   const [otpStatus, setOtpStatus] = useState('');
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [confirmationResult, setConfirmationResult] = useState<any>(null);
-  const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
-  const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
-  const recaptchaRenderedRef = useRef(false);
 
   // Alias for incoming help tickets (cloud-synced)
   const helpTickets = employeeQueries || [];
@@ -292,33 +288,7 @@ useEffect(() => {
   const [overrideDate, setOverrideDate] = useState(new Date().toISOString().substring(0, 10));
   const [overrideTime, setOverrideTime] = useState('09:30 AM');
 
-  useEffect(() => {
-    if (!(auth as any)?.app || !recaptchaContainerRef.current) return;
-
-    if (!recaptchaVerifierRef.current) {
-      recaptchaVerifierRef.current = new RecaptchaVerifier(auth, recaptchaContainerRef.current, {
-        size: 'invisible'
-      });
-    }
-
-    if (!recaptchaRenderedRef.current) {
-      recaptchaVerifierRef.current
-        .render()
-        .then(() => {
-          recaptchaRenderedRef.current = true;
-        })
-        .catch((error) => {
-          console.error('Unable to render Firebase reCAPTCHA verifier:', error);
-          recaptchaRenderedRef.current = false;
-        });
-    }
-
-    return () => {
-      recaptchaVerifierRef.current?.clear();
-      recaptchaVerifierRef.current = null;
-      recaptchaRenderedRef.current = false;
-    };
-  }, []);
+  // No reCAPTCHA required for Supabase phone OTP flow in this client.
 
   useEffect(() => {
     setConfirmationResult(null);
@@ -334,31 +304,7 @@ useEffect(() => {
     setIsVerifyingOtp(false);
   };
 
-  const ensureRecaptchaVerifier = async () => {
-    if (!(auth as any)?.app) {
-      throw new Error('Firebase auth is not configured. Please check your Firebase settings.');
-    }
-
-   if (!recaptchaVerifierRef.current) {
-      // CHANGE: Targeting the specific string ID coordinate instead of the reference element
-      recaptchaVerifierRef.current = new RecaptchaVerifier(auth, 'recaptcha-container-hr', {
-        size: 'invisible'
-      });
-    }
-
-    if (!recaptchaRenderedRef.current) {
-      try {
-        await recaptchaVerifierRef.current.render();
-        recaptchaRenderedRef.current = true;
-      } catch (error) {
-        console.error('Unable to render Firebase reCAPTCHA verifier:', error);
-        recaptchaRenderedRef.current = false;
-        throw new Error('The OTP verifier could not be initialized. Please refresh the page and try again.');
-      }
-    }
-
-    return recaptchaVerifierRef.current;
-  };
+  // Supabase handles SMS delivery; no client-side reCAPTCHA initialization required here.
 
   const normalizePhoneForFirebase = (rawPhone: string) => normalizeIndiaPhoneForFirebase(rawPhone);
   const normalizePhoneForStorage = (rawPhone: string) => sanitizeIndiaMobileDigits(rawPhone);
@@ -389,16 +335,13 @@ useEffect(() => {
       setIsSendingOtp(true);
       setOtpStatus('Preparing secure OTP verification...');
 
-      const verifier = await ensureRecaptchaVerifier();
-      
-      // INSERT: Force Google reCAPTCHA to solve before making the SMS handshake
-      await verifier.verify(); 
-
       const phoneNumber = normalizePhoneForFirebase(phoneInput);
-      const result = await signInWithPhoneNumber(auth, phoneNumber, verifier);
-
-      setConfirmationResult(result);
-      setOtpStatus(`OTP request accepted for ${formatIndiaPhoneNumber(phoneInput)}. Check your phone and enter the 6-digit code below.`);
+      // Use Supabase to send OTP via SMS
+      const { data, error } = await supabase.auth.signInWithOtp({ phone: phoneNumber });
+      if (error) throw error;
+      // Supabase does not return a confirmationResult object; keep a marker instead
+      setConfirmationResult({ phone: phoneNumber });
+      setOtpStatus(`OTP request accepted for ${formatIndiaPhoneNumber(phoneInput)}. Check your phone and enter the verification code.`);
       appendTerminalLog && appendTerminalLog(`[HR] OTP sent to ${formatIndiaPhoneNumber(phoneInput)}`);
       toast(`OTP request accepted for ${formatIndiaPhoneNumber(phoneInput)}. Please check your phone and enter the verification code.`, 'info');
     } catch (error: any) {
@@ -439,15 +382,17 @@ useEffect(() => {
     }
 
     const enteredOtp = otpInput.trim();
-    if (!/^\d{6}$/.test(enteredOtp)) {
-      throw new Error('Enter the 6-digit OTP sent to your phone.');
+    if (!/^\d{4,6}$/.test(enteredOtp)) {
+      throw new Error('Enter the OTP sent to your phone.');
     }
 
     setIsVerifyingOtp(true);
     setOtpStatus('Verifying OTP...');
 
     try {
-      await confirmationResult.confirm(enteredOtp);
+      const phoneNumber = confirmationResult.phone as string;
+      const { data, error } = await supabase.auth.verifyOtp({ phone: phoneNumber, token: enteredOtp, type: 'sms' });
+      if (error) throw error;
       setPhoneVerified(true);
       setConfirmationResult(null);
       setOtpStatus('Phone verified successfully.');
@@ -1205,7 +1150,7 @@ useEffect(() => {
                   />
                 </div>
 
-                <div id="recaptcha-container-hr" ref={recaptchaContainerRef} className="h-0 overflow-hidden opacity-0 pointer-events-none" />
+                {/* reCAPTCHA container removed — using Supabase SMS OTP flow */}
 
                 <button
                   type="submit"
@@ -1216,8 +1161,8 @@ useEffect(() => {
                 </button>
               </form>
 
-              <div className="text-[10px] uppercase font-mono text-center text-slate-400 select-none">
-                🔒 Use a real mobile number that can receive SMS. Firebase will send the OTP instantly and the code will be validated before access is granted.
+                <div className="text-[10px] uppercase font-mono text-center text-slate-400 select-none">
+                🔒 Use a real mobile number that can receive SMS. Supabase will send the OTP and the code will be validated before access is granted.
               </div>
               <div className="text-[10px] uppercase font-mono text-center text-slate-400 select-none">
                 🔍 Current host: {typeof window !== 'undefined' ? window.location.host : 'unknown'}
