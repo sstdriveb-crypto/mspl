@@ -108,7 +108,12 @@ Provide authoritative, clear engineering and HR insights. Format your output usi
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        host: "0.0.0.0",
+        port: process.env.VITE_PORT ? Number(process.env.VITE_PORT) : PORT + 1,
+        hmr: process.env.DISABLE_HMR !== "true"
+      },
       appType: "spa"
     });
     app.use(vite.middlewares);
