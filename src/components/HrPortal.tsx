@@ -64,15 +64,12 @@ export default function HrPortal({
   const [hrUser, setHrUser] = useState<HrUser | null>(null);
   const [isHrLoggedIn, setIsHrLoggedIn] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [phoneInput, setPhoneInput] = useState('');
-  const [otpInput, setOtpInput] = useState('');
+  const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [parentPasscode, setParentPasscode] = useState('');
-  const [isSendingOtp, setIsSendingOtp] = useState(false);
-  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
-  const [otpStatus, setOtpStatus] = useState('');
-  const [phoneVerified, setPhoneVerified] = useState(false);
-  const [confirmationResult, setConfirmationResult] = useState<any>(null);
+  const [isProcessingAuth, setIsProcessingAuth] = useState(false);
+  const [authStatus, setAuthStatus] = useState('');
 
   // Alias for incoming help tickets (cloud-synced)
   const helpTickets = employeeQueries || [];
@@ -103,7 +100,8 @@ export default function HrPortal({
 
   const handleDirectorApproveHR = async (phoneNumber: string) => {
     try {
-      const hr = registeredHrsList.find(h => h.phoneNumber === phoneNumber);
+      const id = phoneNumber;
+      const hr = registeredHrsList.find(h => h.id === id || h.email === id || h.phoneNumber === id);
       if (!hr || !hr.id) return toast('HR user not found.', 'error');
       await updateDoc(doc(db, 'hr_users', hr.id), { verified: true });
       toast('✓ HR Approved via cloud.', 'success');
@@ -288,30 +286,8 @@ useEffect(() => {
   const [overrideDate, setOverrideDate] = useState(new Date().toISOString().substring(0, 10));
   const [overrideTime, setOverrideTime] = useState('09:30 AM');
 
-  // No reCAPTCHA required for Supabase phone OTP flow in this client.
-
-  useEffect(() => {
-    setConfirmationResult(null);
-    setPhoneVerified(false);
-    setOtpStatus('');
-  }, [phoneInput, authMode]);
-
-  const resetPhoneAuthState = () => {
-    setConfirmationResult(null);
-    setPhoneVerified(false);
-    setOtpStatus('');
-    setIsSendingOtp(false);
-    setIsVerifyingOtp(false);
-  };
-
-  // Supabase handles SMS delivery; no client-side reCAPTCHA initialization required here.
-
-  const normalizePhoneForFirebase = (rawPhone: string) => normalizeIndiaPhoneForFirebase(rawPhone);
+  // Email/password auth will use Supabase signUp / signInWithPassword flows
   const normalizePhoneForStorage = (rawPhone: string) => sanitizeIndiaMobileDigits(rawPhone);
-
-  const handlePhoneInputChange = (value: string) => {
-    setPhoneInput(sanitizeIndiaMobileDigits(value));
-  };
 
   const handleNewPhoneInputChange = (value: string) => {
     setNewPhone(sanitizeIndiaMobileDigits(value));
@@ -320,87 +296,7 @@ useEffect(() => {
   const handleMdDirectPhoneInputChange = (value: string) => {
     setMdDirectPhone(sanitizeIndiaMobileDigits(value));
   };
-
-  const handleSendRealOtp = async (e: React.MouseEvent) => {
-    e.preventDefault();
-
-    const digits = phoneInput.replace(/\D/g, '');
-    if (digits.length !== 10) {
-      toast('Please enter a valid 10-digit mobile number to receive the OTP.', 'error');
-      return;
-    }
-
-    try {
-      resetPhoneAuthState();
-      setIsSendingOtp(true);
-      setOtpStatus('Preparing secure OTP verification...');
-
-      const phoneNumber = normalizePhoneForFirebase(phoneInput);
-      // Use Supabase to send OTP via SMS
-      const { data, error } = await supabase.auth.signInWithOtp({ phone: phoneNumber });
-      if (error) throw error;
-      // Supabase does not return a confirmationResult object; keep a marker instead
-      setConfirmationResult({ phone: phoneNumber });
-      setOtpStatus(`OTP request accepted for ${formatIndiaPhoneNumber(phoneInput)}. Check your phone and enter the verification code.`);
-      appendTerminalLog && appendTerminalLog(`[HR] OTP sent to ${formatIndiaPhoneNumber(phoneInput)}`);
-      toast(`OTP request accepted for ${formatIndiaPhoneNumber(phoneInput)}. Please check your phone and enter the verification code.`, 'info');
-    } catch (error: any) {
-      console.error('Firebase OTP send failed:', error);
-      const errorCode = error?.code;
-      let errorMessage = error?.message || 'Unable to send OTP right now.';
-
-      if (errorCode === 'auth/operation-not-allowed') {
-        errorMessage = 'Phone Authentication is not enabled for this Firebase project. Please enable it in Firebase Console.';
-      } else if (errorCode === 'auth/invalid-phone-number') {
-        errorMessage = 'The phone number is invalid. Please confirm the 10-digit mobile number and try again.';
-      } else if (errorCode === 'auth/recaptcha-not-enabled') {
-        errorMessage = 'The OTP verifier is not available on this page. Please refresh and try again.';
-      } else if (errorCode === 'auth/unauthorized-domain') {
-        errorMessage = 'This domain is not authorized for Firebase Phone Authentication. Add the current domain under Authorized domains in Firebase Console.';
-      } else if (errorCode === 'auth/quota-exceeded') {
-        errorMessage = 'SMS quota exceeded for this Firebase project. Please check Firebase usage limits or try again later.';
-      } else if (errorCode === 'auth/missing-app-credential') {
-        errorMessage = 'App verification failed. This app may not be served over an allowed domain or the reCAPTCHA setup is incomplete.';
-      }
-
-      if (errorCode) {
-        errorMessage = `${errorMessage} (${errorCode})`;
-      }
-
-      setOtpStatus(errorMessage);
-      appendTerminalLog && appendTerminalLog(`[HR ERROR] OTP_SEND: ${errorCode || 'UNKNOWN'} - ${errorMessage}`);
-      toast(errorMessage, 'error');
-      resetPhoneAuthState();
-    } finally {
-      setIsSendingOtp(false);
-    }
-  };
-
-  const handleVerifyPhoneOtp = async () => {
-    if (!confirmationResult) {
-      throw new Error('Please send the OTP first.');
-    }
-
-    const enteredOtp = otpInput.trim();
-    if (!/^\d{4,6}$/.test(enteredOtp)) {
-      throw new Error('Enter the OTP sent to your phone.');
-    }
-
-    setIsVerifyingOtp(true);
-    setOtpStatus('Verifying OTP...');
-
-    try {
-      const phoneNumber = confirmationResult.phone as string;
-      const { data, error } = await supabase.auth.verifyOtp({ phone: phoneNumber, token: enteredOtp, type: 'sms' });
-      if (error) throw error;
-      setPhoneVerified(true);
-      setConfirmationResult(null);
-      setOtpStatus('Phone verified successfully.');
-      appendTerminalLog && appendTerminalLog(`[HR] Phone verified: ${formatIndiaPhoneNumber(phoneInput)}`);
-    } finally {
-      setIsVerifyingOtp(false);
-    }
-  };
+  // Email/password auth will use Supabase signUp / signInWithPassword flows
 
   // --- 1. Employee Workspace Login ---
   const handleEmployeeLogin = (e: React.FormEvent) => {
@@ -431,90 +327,88 @@ useEffect(() => {
   // --- 2. HR Portal Login & New Registration ---
   const handleRegisterHr = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!phoneInput || !passwordInput) {
-      toast('Please provide the phone number and a secure password for the HR account.', 'error');
+    if (!emailInput || !passwordInput) {
+      toast('Please provide an email and a secure password for the HR account.', 'error');
       return;
     }
 
+    if (authMode === 'register' && passwordInput !== confirmPassword) {
+      toast('Passwords do not match.', 'error');
+      return;
+    }
+
+    if (registeredHrsList.some(hr => hr.email === emailInput)) {
+      toast('This HR email is already registered. Please login.', 'warning');
+      return;
+    }
+
+    setIsProcessingAuth(true);
+    setAuthStatus('Creating account...');
     try {
-      await handleVerifyPhoneOtp();
-    } catch (error: any) {
-      appendTerminalLog && appendTerminalLog(`[HR ERROR] OTP_VERIFY: ${error?.code || 'UNKNOWN'} - ${error?.message || String(error)}`);
-      toast(error?.message || 'Phone verification failed. Please retry the OTP.', 'error');
-      return;
-    }
+      const { data, error } = await supabase.auth.signUp({ email: emailInput, password: passwordInput });
+      if (error) throw error;
 
-    const normalizedPhone = normalizePhoneForStorage(phoneInput);
+      const newHr: HrUser = {
+        email: emailInput,
+        password: passwordInput,
+        verified: false,
+        isParentVerified: false
+      } as any;
 
-    if (registeredHrsList.some(hr => hr.phoneNumber === normalizedPhone)) {
-      toast('This HR telephone connection is already registered. Please login.', 'warning');
-      return;
-    }
-
-    const newHr: HrUser = {
-      phoneNumber: normalizedPhone,
-      password: passwordInput,
-      verified: false,
-      isParentVerified: false
-    };
-
-    try {
       // Add the new HR registration to the 'hr_users' collection in the cloud
       await addDoc(collection(db, "hr_users"), newHr);
-    } catch (error) {
-      toast('Cloud registration failed. Check your internet.', 'error');
-      return;
+
+      toast('✓ HR Setup Submitted! Please request your Managing Director to verify this registration.', 'success');
+      setAuthMode('login');
+      setEmailInput('');
+      setPasswordInput('');
+      setConfirmPassword('');
+      setAuthStatus('');
+    } catch (error: any) {
+      console.error('[HR REGISTER] ', error);
+      toast(error?.message || 'Cloud registration failed. Check your internet.', 'error');
+    } finally {
+      setIsProcessingAuth(false);
     }
-    
-    toast('✓ HR Setup Submitted! Please request your Managing Director to verify this registration.', 'success');
-    setAuthMode('login');
-    setOtpInput('');
-    setPhoneInput('');
-    setPasswordInput('');
-    resetPhoneAuthState();
   };
 
   const handleLoginHr = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!phoneInput || !passwordInput) {
-      toast('Please provide your phone connection and password.', 'error');
+    if (!emailInput || !passwordInput) {
+      toast('Please provide your email and password.', 'error');
       return;
     }
 
+    setIsProcessingAuth(true);
+    setAuthStatus('Signing in...');
     try {
-      await handleVerifyPhoneOtp();
+      const { data, error } = await supabase.auth.signInWithPassword({ email: emailInput, password: passwordInput });
+      if (error) throw error;
+
+      const foundHr = registeredHrsList.find(hr => hr.email === emailInput);
+      if (!foundHr) {
+        toast('HR registry not found. Please contact admin.', 'error');
+        return;
+      }
+
+      if (!foundHr.verified) {
+        toast('⚠️ Approval Needed: This HR Setup is pending certification by your Managing Director or Director.', 'warning');
+        return;
+      }
+
+      // Set in-memory HR session; persistence handled by Supabase session
+      setHrUser(foundHr);
+      setIsHrLoggedIn(true);
+      appendTerminalLog && appendTerminalLog(`[HR] HR login successful: ${emailInput}`);
+      toast(`✓ Welcome back, HR Specialist [${emailInput}]`, 'success');
+      setPasswordInput('');
+      setAuthStatus('');
     } catch (error: any) {
-      appendTerminalLog && appendTerminalLog(`[HR ERROR] OTP_VERIFY: ${error?.code || 'UNKNOWN'} - ${error?.message || String(error)}`);
-      toast(error?.message || 'Phone verification failed. Please retry the OTP.', 'error');
-      return;
+      console.error('[HR LOGIN] ', error);
+      toast(error?.message || 'Sign-in failed. Check credentials and try again.', 'error');
+    } finally {
+      setIsProcessingAuth(false);
     }
-
-    const normalizedPhone = normalizePhoneForStorage(phoneInput);
-    const foundHr = registeredHrsList.find(hr => hr.phoneNumber === normalizedPhone);
-    if (!foundHr) {
-      toast('HR telephone registry not found. Setup your credentials under the New HR Setup tab.', 'error');
-      return;
-    }
-
-    if (passwordInput !== foundHr.password) {
-      toast('Incorrect credentials passcode.', 'error');
-      return;
-    }
-
-    if (!foundHr.verified) {
-      toast('⚠️ Approval Needed: This HR Setup is pending certification by your Managing Director or Director.', 'warning');
-      return;
-    }
-
-    // Set in-memory HR session; persistence should be handled by cloud/auth layers
-    setHrUser(foundHr);
-    setIsHrLoggedIn(true);
-    appendTerminalLog && appendTerminalLog(`[HR] HR login successful: ${normalizedPhone}`);
-    toast(`✓ Welcome back, HR Specialist [Conn: ${phoneInput}]`, 'success');
-    setOtpInput('');
-    resetPhoneAuthState();
   };
 
   const handleLogoutHr = () => {
@@ -829,7 +723,7 @@ useEffect(() => {
 
   // D. HR Approval Verification
   const handleMDToggleHRVerification = async (phone: string) => {
-    const hr = registeredHrsList.find(h => h.phoneNumber === phone);
+    const hr = registeredHrsList.find(h => h.id === phone || h.email === phone || h.phoneNumber === phone);
     if (!hr || !hr.id) return;
 
     try {
@@ -839,18 +733,20 @@ useEffect(() => {
         verified: nextState,
         isParentVerified: nextState
       });
-      toast(`✓ HR ${phone} ${nextState ? 'Approved' : 'Suspended'}!`, 'success');
+      const label = hr.email || formatIndiaPhoneNumber(hr.phoneNumber || '');
+      toast(`✓ HR ${label} ${nextState ? 'Approved' : 'Suspended'}!`, 'success');
     } catch (err) {
       toast("Failed to change HR authentication state.", "error");
     }
   };
 
   const handleMDDeleteHR = async (phone: string) => {
-    if (phone === '9911020260') {
+    // protect a seeded demo account (by phone or email id)
+    if (phone === '9911020260' || phone === 'demo@mspl.local') {
       toast('Cannot delete the primary/default demo HR administrator.', 'error');
       return;
     }
-    const hr = registeredHrsList.find(h => h.phoneNumber === phone);
+    const hr = registeredHrsList.find(h => h.id === phone || h.email === phone || h.phoneNumber === phone);
     if (!hr || !hr.id) return;
 
     try {
@@ -1071,7 +967,7 @@ useEffect(() => {
             <div className="p-6 sm:p-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xl backdrop-blur-md space-y-6 animate-fade-in text-left">
               <div className="text-center space-y-1">
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display">MSPL Certified HR Terminal Login</h3>
-                <p className="text-xs text-slate-500">Use your real mobile number and Firebase will send the one-time code directly to your phone.</p>
+                <p className="text-xs text-slate-500">Use your corporate email and a secure password to sign in or register.</p>
               </div>
 
               <div className="flex bg-slate-100 dark:bg-slate-950 p-1 rounded-xl select-none text-xs font-bold leading-none shrink-0">
@@ -1093,76 +989,59 @@ useEffect(() => {
 
               <form onSubmit={authMode === 'login' ? handleLoginHr : handleRegisterHr} className="space-y-4 text-xs font-medium">
                 <div className="space-y-1">
-                  <label className="block text-[10px] font-bold uppercase text-slate-500">Registered Telephone Number *</label>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <div className="flex flex-1 items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
-                      <span className="px-3.5 py-2.5 text-sm font-bold text-slate-700 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800 select-none">
-                        +91
-                      </span>
-                      <input
-                        type="tel"
-                        required
-                        inputMode="numeric"
-                        autoComplete="tel"
-                        maxLength={10}
-                        placeholder="9999999999"
-                        value={phoneInput}
-                        onChange={e => handlePhoneInputChange(e.target.value)}
-                        className="w-full bg-transparent px-3.5 py-2.5 font-bold focus:outline-none"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleSendRealOtp}
-                      disabled={isSendingOtp}
-                      className="px-3.5 bg-slate-100 dark:bg-slate-950 hover:bg-slate-200 border border-slate-205 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl font-bold cursor-pointer transition select-none leading-none shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {isSendingOtp ? 'Sending...' : 'Send Real OTP'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-bold uppercase text-slate-500">Firebase SMS Verification Code *</label>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500">Email Address *</label>
                   <input
-                    type="text"
+                    type="email"
                     required
-                    maxLength={6}
-                    placeholder="Enter the 6-digit OTP received on your phone"
-                    value={otpInput}
-                    onChange={e => setOtpInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 font-mono text-center tracking-widest font-extrabold focus:outline-none placeholder-slate-400"
+                    autoComplete="email"
+                    placeholder="name@company.com"
+                    value={emailInput}
+                    onChange={e => setEmailInput(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 font-bold focus:outline-none"
                   />
-                  {otpStatus && (
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 pt-1">{otpStatus}</p>
-                  )}
                 </div>
 
                 <div className="space-y-1">
-                  <label className="block text-[10px] font-bold uppercase text-slate-500">HR Admin Private Password *</label>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500">Password *</label>
                   <input
                     type="password"
                     required
-                    placeholder="Enter credentials password..."
+                    autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                    placeholder="Enter a secure password"
                     value={passwordInput}
                     onChange={e => setPasswordInput(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 font-bold focus:outline-none"
                   />
                 </div>
 
+                {authMode === 'register' && (
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold uppercase text-slate-500">Confirm Password *</label>
+                    <input
+                      type="password"
+                      required
+                      autoComplete="new-password"
+                      placeholder="Repeat the password"
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 font-bold focus:outline-none"
+                    />
+                  </div>
+                )}
+
                 {/* reCAPTCHA container removed — using Supabase SMS OTP flow */}
 
                 <button
                   type="submit"
-                  disabled={isVerifyingOtp}
+                  disabled={isProcessingAuth}
                   className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold cursor-pointer transition shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {isVerifyingOtp ? 'Verifying...' : authMode === 'login' ? 'Confirm Verification Gateway' : 'Submit HR Registration Card'}
+                  {isProcessingAuth ? (authMode === 'login' ? 'Signing in...' : 'Registering...') : authMode === 'login' ? 'Sign In' : 'Submit HR Registration Card'}
                 </button>
               </form>
 
                 <div className="text-[10px] uppercase font-mono text-center text-slate-400 select-none">
-                🔒 Use a real mobile number that can receive SMS. Supabase will send the OTP and the code will be validated before access is granted.
+                🔒 Use a corporate email address and a strong password. Supabase will handle authentication.
               </div>
               <div className="text-[10px] uppercase font-mono text-center text-slate-400 select-none">
                 🔍 Current host: {typeof window !== 'undefined' ? window.location.host : 'unknown'}
@@ -1964,14 +1843,14 @@ useEffect(() => {
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {registeredHrsList?.filter(hr => !hr.verified).map(hr => (
-                        <div key={hr.phoneNumber} className="p-4 rounded-2xl border bg-white dark:bg-slate-950 flex justify-between items-center text-xs">
+                        <div key={hr.id || hr.email || hr.phoneNumber} className="p-4 rounded-2xl border bg-white dark:bg-slate-950 flex justify-between items-center text-xs">
                           <div>
-                            <span className="font-bold text-slate-800 dark:text-slate-100 block">HR Setup Connection: {formatIndiaPhoneNumber(hr.phoneNumber)}</span>
+                            <span className="font-bold text-slate-800 dark:text-slate-100 block">HR Setup Connection: {hr.email || (hr.phoneNumber ? formatIndiaPhoneNumber(hr.phoneNumber) : '—')}</span>
                             <span className="text-[9.5px] text-amber-500 block font-mono">Status: Pending MD Signature Approval</span>
                           </div>
 
                           <button
-                            onClick={() => handleDirectorApproveHR(hr.phoneNumber)}
+                            onClick={() => handleDirectorApproveHR(hr.id || hr.email || hr.phoneNumber || '')}
                             className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer select-none leading-none shrink-0 shadow-sm"
                           >
                             Stamp & Verify
@@ -1988,16 +1867,16 @@ useEffect(() => {
                   <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-950">
                     <table className="w-full text-xs text-left">
                       <thead>
-                        <tr className="bg-slate-50 dark:bg-slate-900 text-slate-400 border-b border-slate-200 dark:border-slate-800 uppercase font-mono tracking-wider text-[9.5px]">
-                          <th className="py-3 px-4">HR Phone Node ID</th>
+                          <tr className="bg-slate-50 dark:bg-slate-900 text-slate-400 border-b border-slate-200 dark:border-slate-800 uppercase font-mono tracking-wider text-[9.5px]">
+                          <th className="py-3 px-4">HR Contact</th>
                           <th className="py-3 px-4">Registration status</th>
                           <th className="py-3 px-4 text-center">Security commands</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800/40">
                         {registeredHrsList?.map(hr => (
-                          <tr key={hr.phoneNumber} className="hover:bg-slate-50/20">
-                            <td className="py-3 px-4 font-mono font-bold text-slate-800 dark:text-slate-100">{formatIndiaPhoneNumber(hr.phoneNumber)}</td>
+                          <tr key={hr.id || hr.email || hr.phoneNumber} className="hover:bg-slate-50/20">
+                            <td className="py-3 px-4 font-mono font-bold text-slate-800 dark:text-slate-100">{hr.email || (hr.phoneNumber ? formatIndiaPhoneNumber(hr.phoneNumber) : '—')}</td>
                             <td className="py-3 px-4 select-none">
                               {hr.verified ? (
                                 <span className="px-2.5 py-0.5 rounded text-[8.5px] font-black bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">✓ CERTIFIED STATUS</span>
@@ -2008,13 +1887,13 @@ useEffect(() => {
                             <td className="py-2 px-4 text-center">
                               <div className="flex justify-center items-center gap-2 select-none">
                                 <button
-                                  onClick={() => handleMDToggleHRVerification(hr.phoneNumber)}
+                                  onClick={() => handleMDToggleHRVerification(hr.id || hr.email || hr.phoneNumber || '')}
                                   className={`px-3 py-1.5 rounded-lg text-[10.5px] font-bold cursor-pointer transition ${hr.verified ? "bg-amber-50 dark:bg-amber-950/20 text-amber-600 border border-amber-500/20" : "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 border border-emerald-500/20"}`}
                                 >
                                   {hr.verified ? "Revoke Access" : "Grant Access"}
                                 </button>
                                 <button
-                                  onClick={() => handleMDDeleteHR(hr.phoneNumber)}
+                                  onClick={() => handleMDDeleteHR(hr.id || hr.email || hr.phoneNumber || '')}
                                   className="px-2.5 py-1.5 bg-rose-500/15 text-rose-600 rounded-lg text-[10.5px] font-bold border border-rose-500/10 hover:bg-rose-500/20"
                                 >
                                   Delete

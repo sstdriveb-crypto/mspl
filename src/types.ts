@@ -142,7 +142,8 @@ export interface PayslipFormat {
 
 export interface HrUser {
   id?: string;
-  phoneNumber: string;
+  phoneNumber?: string;
+  email?: string;
   password?: string;
   verified: boolean;
   isParentVerified: boolean;
