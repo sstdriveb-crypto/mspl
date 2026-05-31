@@ -14,7 +14,6 @@ import {
 import { supabase } from '../lib/supabaseClient';
 import DocumentViewer from './DocumentViewer';
 import { generatePayslipPDF } from '../lib/pdfHelper';
-import { formatIndiaPhoneNumber, sanitizeIndiaMobileDigits } from '../lib/phoneHelper';
 interface HrPortalProps {
   employees: Employee[];
   attendanceLogs: AttendanceLog[];
@@ -305,11 +304,7 @@ export default function HrPortal({
   const [overrideTime, setOverrideTime] = useState('09:30 AM');
 
   // Email/password auth will use Supabase signUp / signInWithPassword flows
-  const normalizePhoneForStorage = (rawPhone: string) => sanitizeIndiaMobileDigits(rawPhone);
 
-  const handleNewPhoneInputChange = (value: string) => {
-    setNewPhone(sanitizeIndiaMobileDigits(value));
-  };
 
   const handleMdDirectEmailInputChange = (value: string) => {
     setMdDirectEmail(value);
@@ -551,20 +546,20 @@ export default function HrPortal({
   // A. Pre-register / Edit employee
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanPhoneNumber = sanitizeIndiaMobileDigits(newPhone);
+    const cleanedId = newId.trim().toUpperCase();
 
-    if (!newId.trim() || !newName.trim() || !cleanPhoneNumber || !newPass.trim()) {
+    if (!newId.trim() || !newName.trim() ||  !newPass.trim()) {
       toast('All roster credentials are required.', 'error');
       return;
     }
 
-    const cleanedId = newId.trim().toUpperCase();
+    
     
     try {
       if (editingEmployee) {
         const { error } = await supabase.from('employees').update({
           name: newName.trim(),
-          phoneNumber: cleanPhoneNumber,
+          
           password: newPass,
           familyDetails: newFamily,
           address: newAddress,
@@ -588,7 +583,6 @@ export default function HrPortal({
           name: newName.trim(),
           status: 'approved',
           registeredAt: new Date().toLocaleDateString('en-US'),
-          phoneNumber: cleanPhoneNumber,
           password: newPass,
           familyDetails: newFamily,
           address: newAddress,
@@ -614,7 +608,7 @@ export default function HrPortal({
     setEditingEmployee(emp);
     setNewId(emp.id);
     setNewName(emp.name);
-    setNewPhone(sanitizeIndiaMobileDigits(emp.phoneNumber || ''));
+  
     setNewPass(emp.password || '123456');
     setNewFamily(emp.familyDetails || '');
     setNewAddress(emp.address || '');
@@ -829,7 +823,7 @@ export default function HrPortal({
         isParentVerified: nextState
       }).eq('id', hr.id);
       if (error) throw error;
-      const label = hr.email || formatIndiaPhoneNumber(hr.phoneNumber || '');
+      const label = hr.email;
       setRegisteredHrsList(prev => prev.map(item => item.id === hr.id ? { ...item, verified: nextState, isParentVerified: nextState } : item));
       toast(`✓ HR ${label} ${nextState ? 'Approved' : 'Suspended'}!`, 'success');
     } catch (err: any) {
@@ -1294,7 +1288,6 @@ export default function HrPortal({
                             maxLength={10}
                             placeholder="9845012345"
                             value={newPhone}
-                            onChange={e => handleNewPhoneInputChange(e.target.value)}
                             className="w-full bg-transparent px-3 py-2 font-bold focus:outline-none"
                           />
                         </div>
@@ -1409,7 +1402,6 @@ export default function HrPortal({
                             </div>
                           </td>
                           <td className="py-3 px-4 font-mono font-bold text-indigo-650 dark:text-sky-400">{emp.id}</td>
-                          <td className="py-3 px-4 font-mono font-bold text-slate-600 dark:text-slate-350">{formatIndiaPhoneNumber(emp.phoneNumber) || "No phone"}</td>
                           <td className="py-3 px-4">
                             <div className="flex gap-2.5 font-mono text-[10px] font-bold text-slate-600 dark:text-slate-305">
                               <span className="px-1.5 py-0.5 bg-sky-50 dark:bg-sky-950/30 text-sky-650 rounded border border-sky-100 dark:border-sky-900/50">CL: {emp.leaveBalance?.casual ?? 0}</span>
@@ -1943,7 +1935,7 @@ export default function HrPortal({
                       {registeredHrsList?.filter(hr => !hr.verified).map(hr => (
                         <div key={hr.id || hr.email || hr.phoneNumber} className="p-4 rounded-2xl border bg-white dark:bg-slate-950 flex justify-between items-center text-xs">
                           <div>
-                            <span className="font-bold text-slate-800 dark:text-slate-100 block">HR Setup Connection: {hr.email || (hr.phoneNumber ? formatIndiaPhoneNumber(hr.phoneNumber) : '—')}</span>
+                            <span className="font-bold text-slate-800 dark:text-slate-100 block">HR Setup Connection: {hr.email || '—'}</span>
                             <span className="text-[9.5px] text-amber-500 block font-mono">Status: Pending MD Signature Approval</span>
                           </div>
 
@@ -1974,7 +1966,7 @@ export default function HrPortal({
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800/40">
                         {registeredHrsList?.map(hr => (
                           <tr key={hr.id || hr.email || hr.phoneNumber} className="hover:bg-slate-50/20">
-                            <td className="py-3 px-4 font-mono font-bold text-slate-800 dark:text-slate-100">{hr.email || (hr.phoneNumber ? formatIndiaPhoneNumber(hr.phoneNumber) : '—')}</td>
+                            <td className="py-3 px-4 font-mono font-bold text-slate-800 dark:text-slate-100">{hr.email || '—'}</td>
                             <td className="py-3 px-4 select-none">
                               {hr.verified ? (
                                 <span className="px-2.5 py-0.5 rounded text-[8.5px] font-black bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">✓ CERTIFIED STATUS</span>
