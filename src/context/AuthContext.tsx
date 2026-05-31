@@ -1,51 +1,26 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import React, { createContext, ReactNode, useContext, useState } from 'react';
 
-type SupabaseUser = any | null;
+interface AuthContextValue {
+  user?: Record<string, unknown> | null;
+  signIn?: (email: string, password: string) => Promise<void>;
+  signOut?: () => void;
+}
 
-const AuthContext = createContext<{ user: SupabaseUser; loading: boolean; signOut: () => Promise<void> }>({
-  user: null,
-  loading: true,
-  signOut: async () => {},
-});
+const AuthContext = createContext<AuthContextValue>({});
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<SupabaseUser>(null);
-  const [loading, setLoading] = useState(true);
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
+  const [user, setUser] = useState<Record<string, unknown> | null>(null);
 
-  useEffect(() => {
-    let mounted = true;
+  const signIn = async (email: string, password: string) => {
+    setUser({ email });
+  };
 
-    // Initialize current session/user
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setUser(data.session?.user ?? null);
-      setLoading(false);
-    });
-
-    // Subscribe to auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    return () => {
-      mounted = false;
-      try {
-        subscription?.unsubscribe();
-      } catch (e) {
-        // ignore
-      }
-    };
-  }, []);
-
-  const logout = async () => {
-    await supabase.auth.signOut();
+  const signOut = () => {
+    setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signOut: logout }}>
+    <AuthContext.Provider value={{ user, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

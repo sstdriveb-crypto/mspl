@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Employee, InventoryItem, ShiftAssignment, AttendanceLog, Payslip, HrUser, PayslipFormat, EmployeeHelpQuery 
+  Employee, InventoryItem, AttendanceLog, Payslip, HrUser, PayslipFormat, EmployeeHelpQuery 
 } from './types';
 import CompanyLogo from './components/CompanyLogo';
 import logoAsset from './assets/images/magnifiq_logo_official_1779711238353.png';
@@ -38,7 +38,7 @@ import InventoryTracker, { INITIAL_INVENTORY } from './components/InventoryTrack
 import HrPortal from './components/HrPortal';
 import EmployeePortal from './components/EmployeePortal';
 import { 
-  Sun, Moon, ShieldCheck, Layers, Award, HardHat, FileCheck, Phone, Mail, 
+  Sun, Moon, ShieldCheck, Layers, Award, HardHat, FileCheck, Mail, 
   MapPin, Clock, ArrowRight, Menu, X, ChevronRight, Activity, Zap, CheckCircle2,
   RefreshCw, Briefcase, ShieldAlert, Globe, Building2, UserCheck, FileSpreadsheet,
   TrendingUp, Terminal, Wifi, Train, Landmark, Sparkles, Send, Users
@@ -201,6 +201,10 @@ export default function App() {
   const [isDirectorLoggedIn, setIsDirectorLoggedIn] = useState(() => {
     return localStorage.getItem('mspl_director_logged_in') === 'true';
   });
+
+  useEffect(() => {
+    localStorage.setItem('mspl_director_logged_in', isDirectorLoggedIn ? 'true' : 'false');
+  }, [isDirectorLoggedIn]);
 
   // Current Logged In Employee
   const [currentEmployee, setCurrentEmployee] = useState<Employee | null>(() => {
@@ -1322,7 +1326,12 @@ export default function App() {
                   setIsDirectorLoggedIn(val);
                   if (!val && currentEmployee && (currentEmployee.role === 'md' || currentEmployee.role === 'director')) {
                     setCurrentEmployee(null);
+                    localStorage.removeItem('mspl_current_employee');
                   }
+                }}
+                onLogoutDirector={() => {
+                  setCurrentEmployee(null);
+                  localStorage.removeItem('mspl_current_employee');
                 }}
                 onSelectEmployee={(emp) => {
                   setCurrentEmployee(emp);

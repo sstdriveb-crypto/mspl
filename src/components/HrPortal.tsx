@@ -6,12 +6,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Employee, AttendanceLog, Payslip, HrUser, FinanceRecord, RecycleBinItem, DocumentFile, PayslipFormat, EmployeeHelpQuery } from '../types';
 import { 
-  ShieldCheck, Phone, Key, Lock, CheckCircle2, UserPlus, Users, 
+  ShieldCheck, Key, Lock, CheckCircle2, UserPlus, Users, 
   FileCheck, Calendar, DollarSign, Download, Plus, Trash2, Edit2, 
   MapPin, Eye, Camera, ShieldAlert, Award, FileText, ClipboardList, TrendingUp, Settings, Trash, CheckCircle, Check,
   Upload, HelpCircle
 } from 'lucide-react';
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../supabaseClient';
 import DocumentViewer from './DocumentViewer';
 import { generatePayslipPDF } from '../lib/pdfHelper';
 interface HrPortalProps {
@@ -28,6 +28,7 @@ interface HrPortalProps {
   toast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
   confirmDialog: (title: string, msg: string, onConfirm: () => void, confirmText?: string, isDanger?: boolean) => void;
   onSelectEmployee: (emp: Employee) => void; 
+  onLogoutDirector?: () => void;
   isDirectorLoggedIn: boolean;
   setIsDirectorLoggedIn: (val: boolean) => void;
   appendTerminalLog?: (msg: string) => void;
@@ -47,9 +48,9 @@ export default function HrPortal({
   toast,
   confirmDialog,
   onSelectEmployee,
+  onLogoutDirector,
   isDirectorLoggedIn,
-  setIsDirectorLoggedIn
-  ,
+  setIsDirectorLoggedIn,
   appendTerminalLog
 }: HrPortalProps) {
   
@@ -126,7 +127,7 @@ export default function HrPortal({
 
   const handleDirectorApproveHR = async (identifier: string) => {
     try {
-      const hr = registeredHrsList.find(h => h.id === identifier || h.email === identifier || h.phoneNumber === identifier);
+      const hr = registeredHrsList.find(h => h.id === identifier || h.email === identifier);
       if (!hr || !hr.id) return toast('HR user not found.', 'error');
 
       const { error } = await supabase.from('hr_users').update({ verified: true }).eq('id', hr.id);
@@ -537,7 +538,9 @@ export default function HrPortal({
 
   const handleLogoutDirector = () => {
     setIsDirectorLoggedIn(false);
-    // No local persistence; director session cleared from memory
+    if (typeof onLogoutDirector === 'function') {
+      onLogoutDirector();
+    }
     toast('Director security session closed.', 'info');
   };
 
@@ -812,8 +815,8 @@ export default function HrPortal({
   };
 
   // D. HR Approval Verification
-  const handleMDToggleHRVerification = async (phone: string) => {
-    const hr = registeredHrsList.find(h => h.id === phone || h.email === phone || h.phoneNumber === phone);
+  const handleMDToggleHRVerification = async (identifier: string) => {
+    const hr = registeredHrsList.find(h => h.id === identifier || h.email === identifier);
     if (!hr || !hr.id) return;
 
     try {
@@ -831,13 +834,13 @@ export default function HrPortal({
     }
   };
 
-  const handleMDDeleteHR = async (phone: string) => {
-    // protect a seeded demo account (by phone or email id)
-    if (phone === '9911020260' || phone === 'demo@mspl.local') {
+  const handleMDDeleteHR = async (identifier: string) => {
+    // protect a seeded demo account (by email or id)
+    if (identifier === 'demo@mspl.local' || identifier === 'MSPL-HR-001') {
       toast('Cannot delete the primary/default demo HR administrator.', 'error');
       return;
     }
-    const hr = registeredHrsList.find(h => h.id === phone || h.email === phone || h.phoneNumber === phone);
+    const hr = registeredHrsList.find(h => h.id === identifier || h.email === identifier);
     if (!hr || !hr.id) return;
 
     try {
@@ -1933,14 +1936,14 @@ export default function HrPortal({
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {registeredHrsList?.filter(hr => !hr.verified).map(hr => (
-                        <div key={hr.id || hr.email || hr.phoneNumber} className="p-4 rounded-2xl border bg-white dark:bg-slate-950 flex justify-between items-center text-xs">
+                        <div key={hr.id || hr.email} className="p-4 rounded-2xl border bg-white dark:bg-slate-950 flex justify-between items-center text-xs">
                           <div>
                             <span className="font-bold text-slate-800 dark:text-slate-100 block">HR Setup Connection: {hr.email || '—'}</span>
                             <span className="text-[9.5px] text-amber-500 block font-mono">Status: Pending MD Signature Approval</span>
                           </div>
 
                           <button
-                            onClick={() => handleDirectorApproveHR(hr.id || hr.email || hr.phoneNumber || '')}
+                            onClick={() => handleDirectorApproveHR(hr.id || hr.email || '')}
                             className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer select-none leading-none shrink-0 shadow-sm"
                           >
                             Stamp & Verify
@@ -1965,7 +1968,7 @@ export default function HrPortal({
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800/40">
                         {registeredHrsList?.map(hr => (
-                          <tr key={hr.id || hr.email || hr.phoneNumber} className="hover:bg-slate-50/20">
+                          <tr key={hr.id || hr.email} className="hover:bg-slate-50/20">
                             <td className="py-3 px-4 font-mono font-bold text-slate-800 dark:text-slate-100">{hr.email || '—'}</td>
                             <td className="py-3 px-4 select-none">
                               {hr.verified ? (
@@ -1977,13 +1980,13 @@ export default function HrPortal({
                             <td className="py-2 px-4 text-center">
                               <div className="flex justify-center items-center gap-2 select-none">
                                 <button
-                                  onClick={() => handleMDToggleHRVerification(hr.id || hr.email || hr.phoneNumber || '')}
+                                  onClick={() => handleMDToggleHRVerification(hr.id || hr.email || '')}
                                   className={`px-3 py-1.5 rounded-lg text-[10.5px] font-bold cursor-pointer transition ${hr.verified ? "bg-amber-50 dark:bg-amber-950/20 text-amber-600 border border-amber-500/20" : "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 border border-emerald-500/20"}`}
                                 >
                                   {hr.verified ? "Revoke Access" : "Grant Access"}
                                 </button>
                                 <button
-                                  onClick={() => handleMDDeleteHR(hr.id || hr.email || hr.phoneNumber || '')}
+                                  onClick={() => handleMDDeleteHR(hr.id || hr.email || '')}
                                   className="px-2.5 py-1.5 bg-rose-500/15 text-rose-600 rounded-lg text-[10.5px] font-bold border border-rose-500/10 hover:bg-rose-500/20"
                                 >
                                   Delete
