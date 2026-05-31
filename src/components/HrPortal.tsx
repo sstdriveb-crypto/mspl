@@ -14,9 +14,7 @@ import {
 import { supabase } from '../lib/supabaseClient';
 import DocumentViewer from './DocumentViewer';
 import { generatePayslipPDF } from '../lib/pdfHelper';
-import { formatIndiaPhoneNumber, normalizeIndiaPhoneForFirebase, sanitizeIndiaMobileDigits } from '../lib/phoneHelper';
-import { db } from '../lib/firebase';
-import { collection, addDoc, doc, updateDoc, onSnapshot, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { formatIndiaPhoneNumber, sanitizeIndiaMobileDigits } from '../lib/phoneHelper';
 interface HrPortalProps {
   employees: Employee[];
   attendanceLogs: AttendanceLog[];
@@ -102,8 +100,8 @@ export default function HrPortal({
     }
 
     try {
-      const { data, error } = await supabase.auth.signUp({ email: mdDirectEmail, password: mdDirectPass });
-      if (error) throw error;
+      const { data, error: authError } = await supabase.auth.signUp({ email: mdDirectEmail, password: mdDirectPass });
+      if (authError) throw authError;
 
       const newHr: HrUser = {
         email: mdDirectEmail,
@@ -112,7 +110,12 @@ export default function HrPortal({
         isParentVerified: true
       } as any;
 
-      await addDoc(collection(db, 'hr_users'), newHr);
+      const { data: insertedHr, error: insertError } = await supabase.from('hr_users').insert([newHr]).select().single();
+      if (insertError) throw insertError;
+
+      if (insertedHr) {
+        setRegisteredHrsList(prev => [...prev, insertedHr]);
+      }
       toast('✓ HR account created and certified by the Director.', 'success');
       setMdDirectEmail('');
       setMdDirectPass('');
@@ -126,10 +129,13 @@ export default function HrPortal({
     try {
       const hr = registeredHrsList.find(h => h.id === identifier || h.email === identifier || h.phoneNumber === identifier);
       if (!hr || !hr.id) return toast('HR user not found.', 'error');
-      await updateDoc(doc(db, 'hr_users', hr.id), { verified: true });
+
+      const { error } = await supabase.from('hr_users').update({ verified: true }).eq('id', hr.id);
+      if (error) throw error;
+      setRegisteredHrsList(prev => prev.map(item => item.id === hr.id ? { ...item, verified: true } : item));
       toast('✓ HR Approved via cloud.', 'success');
-    } catch (err) {
-      toast('Failed to approve HR.', 'error');
+    } catch (err: any) {
+      toast(err?.message || 'Failed to approve HR.', 'error');
     }
   };
 
@@ -147,42 +153,44 @@ export default function HrPortal({
  // --- HR Registered Users Database ---
   const [registeredHrsList, setRegisteredHrsList] = useState<HrUser[]>([]);
 
-  // Sync HR list
-  // Sync HR list
   useEffect(() => {
-    // Real-time sync for HR users from Firestore
-    const unsubscribe = onSnapshot(collection(db, "hr_users"), (snapshot) => {
-      const hrData = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as HrUser[];
-      setRegisteredHrsList(hrData);
-    }); // <-- Added missing bracket-parenthesis closing set
-    return () => unsubscribe();
+    const fetchHrUsers = async () => {
+      const { data, error } = await supabase.from('hr_users').select('*');
+      if (error) {
+        console.error('Failed to load HR users', error);
+        return;
+      }
+      setRegisteredHrsList(data ?? []);
+    };
+    fetchHrUsers();
   }, []);
 
-  // Global Recycle Bin State
-  // Initialize with empty array, then sync from cloud
-const [recycleBin, setRecycleBin] = useState<RecycleBinItem[]>([]);
+  const [recycleBin, setRecycleBin] = useState<RecycleBinItem[]>([]);
 
-useEffect(() => {
-  const unsubscribe = onSnapshot(collection(db, "recycle_bin"), (snapshot) => {
-    const binData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as RecycleBinItem[];
-    setRecycleBin(binData);
-  });
-  return () => unsubscribe();
-}, []);
+  useEffect(() => {
+    const fetchRecycleBin = async () => {
+      const { data, error } = await supabase.from('recycle_bin').select('*');
+      if (error) {
+        console.error('Failed to load recycle bin', error);
+        return;
+      }
+      setRecycleBin(data ?? []);
+    };
+    fetchRecycleBin();
+  }, []);
 
- // --- Operations Finance Ledger States (Cloud Synced) ---
   const [financeRecords, setFinanceRecords] = useState<FinanceRecord[]>([]);
 
   useEffect(() => {
-    // Listen for real-time updates from your cloud finance collection
-    const unsubscribe = onSnapshot(collection(db, "finance_records"), (snapshot) => {
-      const finData = snapshot.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data() 
-      })) as FinanceRecord[];
-      setFinanceRecords(finData);
-    });
-    return () => unsubscribe();
+    const fetchFinanceRecords = async () => {
+      const { data, error } = await supabase.from('finance_ledger').select('*');
+      if (error) {
+        console.error('Failed to load finance records', error);
+        return;
+      }
+      setFinanceRecords(data ?? []);
+    };
+    fetchFinanceRecords();
   }, []);
 
   // Finance Form States
@@ -231,16 +239,16 @@ useEffect(() => {
       // Find the specific changed item to push up to the cloud collection
       const targetQuery = updated.find(q => q.id === queryId);
       if (targetQuery) {
-        const queryRef = doc(db, "employee_queries", queryId);
-        await updateDoc(queryRef, {
+        const { error } = await supabase.from('employee_queries').update({
           status: 'resolved',
           hrResponse: targetQuery.hrResponse,
           hrRespondedAt: targetQuery.hrRespondedAt
-        });
+        }).eq('id', queryId);
+        if (error) throw error;
       }
       toast("✓ Resolved query and dispatched response back to the cloud console.", "success");
-    } catch (err) {
-      toast("Failed to dispatch helpdesk response to cloud server.", "error");
+    } catch (err: any) {
+      toast(err?.message || "Failed to dispatch helpdesk response to cloud server.", "error");
     }
     
     setReplyTexts({
@@ -368,8 +376,8 @@ useEffect(() => {
     setIsProcessingAuth(true);
     setAuthStatus('Creating account...');
     try {
-      const { data, error } = await supabase.auth.signUp({ email: emailInput, password: passwordInput });
-      if (error) throw error;
+      const { data, error: authError } = await supabase.auth.signUp({ email: emailInput, password: passwordInput });
+      if (authError) throw authError;
 
       const newHr: HrUser = {
         email: emailInput,
@@ -378,8 +386,9 @@ useEffect(() => {
         isParentVerified: false
       } as any;
 
-      // Add the new HR registration to the 'hr_users' collection in the cloud
-      await addDoc(collection(db, "hr_users"), newHr);
+      // Add the new HR registration to the 'hr_users' table in Supabase
+      const { error: insertError } = await supabase.from('hr_users').insert([newHr]);
+      if (insertError) throw insertError;
 
       toast('✓ HR Setup Submitted! Please request your Managing Director to verify this registration.', 'success');
       setAuthMode('login');
@@ -444,9 +453,11 @@ useEffect(() => {
   const handleDirectorLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const secureConfigRef = doc(db, "system_config", "auth");
-      const configSnap = await getDoc(secureConfigRef);
-      const cloudPasscode = configSnap.exists() ? configSnap.data()?.mdPasscode : 'MD-DIRECTOR-2026';
+      const { data: configData, error } = await supabase.from('system_config').select('mdPasscode').eq('id', 'auth').single();
+      if (error && error.code !== 'PGRST116') {
+        throw error;
+      }
+      const cloudPasscode = configData?.mdPasscode || 'MD-DIRECTOR-2026';
 
       if (directorPasscode === cloudPasscode || directorPasscode === 'admin123') {
         setIsDirectorLoggedIn(true);
@@ -494,8 +505,7 @@ useEffect(() => {
     
     try {
       if (editingEmployee) {
-        const empRef = doc(db, "employees", editingEmployee.id);
-        await updateDoc(empRef, {
+        const { error } = await supabase.from('employees').update({
           name: newName.trim(),
           phoneNumber: cleanPhoneNumber,
           password: newPass,
@@ -506,7 +516,8 @@ useEffect(() => {
             sick: newSickLeave,
             annual: newAnnualLeave
           }
-        });
+        }).eq('id', editingEmployee.id);
+        if (error) throw error;
         toast(`✓ Cloud records updated for ${newName}.`, 'success');
         setEditingEmployee(null);
       } else {
@@ -528,8 +539,8 @@ useEffect(() => {
           uploadedFilesList: []
         };
 
-        // FIXED: Using setDoc with cleanedId instead of addDoc to keep database paths uniform
-        await setDoc(doc(db, "employees", cleanedId), newEmp);
+        const { error } = await supabase.from('employees').insert([newEmp]);
+        if (error) throw error;
         toast(`✓ Created employee profile ${newEmp.name} in Cloud.`, 'success');
       }
 
@@ -562,11 +573,11 @@ useEffect(() => {
       `Are you sure you want to resign and delete credentials for "${name}" (ID: ${empId})? Doing so will completely suspend and revoke all access.`,
       async () => {
         try {
-          const empRef = doc(db, "employees", empId);
-          await updateDoc(empRef, {
+          const { error } = await supabase.from('employees').update({
             isResigned: true,
             status: 'revoked'
-          });
+          }).eq('id', empId);
+          if (error) throw error;
           toast(`Employee "${name}" marked as Resigned. Login revoked on Cloud.`, 'info');
         } catch (error: any) {
           toast("Failed to update resignation status on the server.", "error");
@@ -586,11 +597,11 @@ useEffect(() => {
     const updatedList = list.map(f => f.key === docKey ? { ...f, status: 'verified' as const } : f);
 
     try {
-      const empRef = doc(db, "employees", empId);
-      await updateDoc(empRef, {
+      const { error } = await supabase.from('employees').update({
         [docKey]: 'verified',
         uploadedFilesList: updatedList
-      });
+      }).eq('id', empId);
+      if (error) throw error;
       toast(`✓ HR Verified submitted document "${docKey}" for Employee: ${empId}.`, 'success');
     } catch (error: any) {
       toast("Failed to update document verification on cloud.", "error");
@@ -622,12 +633,13 @@ useEffect(() => {
     const remaining = list.filter(f => f.key !== docKey);
 
     try {
-      await addDoc(collection(db, "recycle_bin"), binItem);
-      const empRef = doc(db, "employees", empId);
-      await updateDoc(empRef, {
+      const { error: recycleError } = await supabase.from('recycle_bin').insert([binItem]);
+      if (recycleError) throw recycleError;
+      const { error } = await supabase.from('employees').update({
         [docKey]: null,
         uploadedFilesList: remaining
-      });
+      }).eq('id', empId);
+      if (error) throw error;
       toast(`✓ Document "${docTitle}" rejected and moved to global Cloud Recycle Bin.`, 'warning');
     } catch (error: any) {
       toast("Error synchronizing document rejection to server.", "error");
@@ -657,10 +669,11 @@ useEffect(() => {
         overrideBy: 'HR Office Administrator',
         timestamp: new Date().toISOString()
       };
-      await addDoc(collection(db, "attendance_logs"), newLog);
+      const { error } = await supabase.from('attendance_logs').insert([newLog]);
+      if (error) throw error;
       toast(`✓ Manual Clock-In registered for ${emp.name}.`, 'success');
       setOverrideEmpId('');
-    } catch (err) {
+    } catch (err: any) {
       toast("Failed to post manual attendance to server.", "error");
     }
   };
@@ -675,15 +688,15 @@ useEffect(() => {
 
     try {
       if (editingAttendance) {
-        const logRef = doc(db, "attendance_logs", editingAttendance.id);
-        await updateDoc(logRef, {
+        const { error } = await supabase.from('attendance_logs').update({
           employeeId: attEmpId,
           employeeName: attEmpName,
           date: attDate,
           time: attTime,
           isManualOverride: true,
           overrideBy: 'Managing Director'
-        });
+        }).eq('id', editingAttendance.id);
+        if (error) throw error;
         toast(`✓ Attendance log updated in Cloud!`, "success");
         setEditingAttendance(null);
       } else {
@@ -698,7 +711,8 @@ useEffect(() => {
           overrideBy: 'Managing Director',
           timestamp: new Date().toISOString()
         };
-        await addDoc(collection(db, "attendance_logs"), newLog);
+        const { error } = await supabase.from('attendance_logs').insert([newLog]);
+        if (error) throw error;
         toast(`✓ Attendance manual record logged.`, "success");
       }
 
@@ -736,10 +750,12 @@ useEffect(() => {
     };
 
     try {
-      await addDoc(collection(db, "recycle_bin"), binItem);
-      await deleteDoc(doc(db, "attendance_logs", logId));
+      const { error: recycleError } = await supabase.from('recycle_bin').insert([binItem]);
+      if (recycleError) throw recycleError;
+      const { error } = await supabase.from('attendance_logs').delete().eq('id', logId);
+      if (error) throw error;
       toast(`✓ Attendance log moved to Recycle Bin.`, 'warning');
-    } catch (error) {
+    } catch (error: any) {
       toast("Failed to send attendance log to storage bin.", "error");
     }
   };
@@ -751,14 +767,15 @@ useEffect(() => {
 
     try {
       const nextState = !hr.verified;
-      const hrRef = doc(db, "hr_users", hr.id);
-      await updateDoc(hrRef, {
+      const { error } = await supabase.from('hr_users').update({
         verified: nextState,
         isParentVerified: nextState
-      });
+      }).eq('id', hr.id);
+      if (error) throw error;
       const label = hr.email || formatIndiaPhoneNumber(hr.phoneNumber || '');
+      setRegisteredHrsList(prev => prev.map(item => item.id === hr.id ? { ...item, verified: nextState, isParentVerified: nextState } : item));
       toast(`✓ HR ${label} ${nextState ? 'Approved' : 'Suspended'}!`, 'success');
-    } catch (err) {
+    } catch (err: any) {
       toast("Failed to change HR authentication state.", "error");
     }
   };
@@ -773,9 +790,11 @@ useEffect(() => {
     if (!hr || !hr.id) return;
 
     try {
-      await deleteDoc(doc(db, "hr_users", hr.id));
+      const { error } = await supabase.from('hr_users').delete().eq('id', hr.id);
+      if (error) throw error;
+      setRegisteredHrsList(prev => prev.filter(item => item.id !== hr.id));
       toast(`✓ HR account removed completely from active registry.`, 'success');
-    } catch (err) {
+    } catch (err: any) {
       toast("Failed to remove HR record from cloud.", "error");
     }
   };
@@ -801,11 +820,12 @@ useEffect(() => {
     };
 
     try {
-      await addDoc(collection(db, "payslips"), newPayslip);
+      const { error } = await supabase.from('payslips').insert([newPayslip]);
+      if (error) throw error;
       toast(`✓ Payslip disbursed safely to employee ${payEmpId}.`, 'success');
       setPayEmpId('');
-    } catch (err) {
-      toast("Payroll distribution pipeline error.", "error");
+    } catch (err: any) {
+      toast(err?.message || "Payroll distribution pipeline error.", "error");
     }
   };
 
@@ -849,10 +869,12 @@ useEffect(() => {
 
     try {
       if (editingFinance) {
-        await updateDoc(doc(db, "finance_ledger", editingFinance.id), financeData);
+        const { error } = await supabase.from('finance_ledger').update(financeData).eq('id', editingFinance.id);
+        if (error) throw error;
         toast("✓ Transaction updated.", "success");
       } else {
-        await addDoc(collection(db, "finance_ledger"), financeData);
+        const { error } = await supabase.from('finance_ledger').insert([financeData]);
+        if (error) throw error;
         toast("✓ New record logged to Cloud.", "success");
       }
       
@@ -877,10 +899,11 @@ useEffect(() => {
       "Are you absolutely sure you want to permanently purge this trace file? This is irrevocable.",
       async () => {
         try {
-          await deleteDoc(doc(db, "recycle_bin", binItemId));
+          const { error } = await supabase.from('recycle_bin').delete().eq('id', binItemId);
+          if (error) throw error;
           toast("✓ Erased permanently from cloud servers.", "success");
-        } catch (error) {
-          toast("Communication failure with server.", "error");
+        } catch (error: any) {
+          toast(error?.message || "Communication failure with server.", "error");
         }
       },
       "Purge File Permanently",
