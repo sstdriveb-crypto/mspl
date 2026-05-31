@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS public.hr_users (
   createdAt TIMESTAMP DEFAULT NOW(),
   updatedAt TIMESTAMP DEFAULT NOW()
 );
+ALTER TABLE public.hr_users ADD COLUMN IF NOT EXISTS isParentVerified BOOLEAN DEFAULT FALSE;
 
 -- 2. Employees Table
 CREATE TABLE IF NOT EXISTS public.employees (

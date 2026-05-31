@@ -106,8 +106,7 @@ export default function HrPortal({
       const newHr: HrUser = {
         email: mdDirectEmail,
         password: mdDirectPass,
-        verified: true,
-        isParentVerified: true
+        verified: true
       } as any;
 
       const { data: insertedHr, error: insertError } = await supabase.from('hr_users').insert([newHr]).select().single();
@@ -365,8 +364,7 @@ export default function HrPortal({
       const newHr: HrUser = {
         email: emailInput,
         password: passwordInput,
-        verified: false,
-        isParentVerified: false
+        verified: false
       } as any;
 
       // Add the new HR registration to the 'hr_users' table in Supabase and return the created row
@@ -394,7 +392,6 @@ export default function HrPortal({
             email: emailInput,
             password: passwordInput,
             verified: false,
-            isParentVerified: false,
             demoOnly: true as any
           } as any;
           const { data: insertedHr, error: insertError } = await supabase.from('hr_users').insert([newHr]).select().single();
@@ -822,12 +819,11 @@ export default function HrPortal({
     try {
       const nextState = !hr.verified;
       const { error } = await supabase.from('hr_users').update({
-        verified: nextState,
-        isParentVerified: nextState
+        verified: nextState
       }).eq('id', hr.id);
       if (error) throw error;
       const label = hr.email;
-      setRegisteredHrsList(prev => prev.map(item => item.id === hr.id ? { ...item, verified: nextState, isParentVerified: nextState } : item));
+      setRegisteredHrsList(prev => prev.map(item => item.id === hr.id ? { ...item, verified: nextState } : item));
       toast(`✓ HR ${label} ${nextState ? 'Approved' : 'Suspended'}!`, 'success');
     } catch (err: any) {
       toast("Failed to change HR authentication state.", "error");

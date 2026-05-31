@@ -146,7 +146,7 @@ export interface HrUser {
   email?: string;
   password?: string;
   verified: boolean;
-  isParentVerified: boolean;
+  isParentVerified?: boolean;
 }
 
 export interface EmployeeHelpQuery {
