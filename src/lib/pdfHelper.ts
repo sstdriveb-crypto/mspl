@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { Employee, Payslip, PayslipFormat } from '../types';
 import logoAsset from '../assets/images/magnifiq_logo_official_1779711238353.png';
-import { formatIndiaPhoneNumber } from './phoneHelper';
+
 
 async function loadImage(url: string): Promise<string> {
   if (url.startsWith('data:')) return url;
@@ -121,8 +121,7 @@ export async function generatePayslipPDF(payslip: Payslip, employee: Employee, f
   doc.text(`Mobile Contact:`, 25, 91);
   doc.setFont("Helvetica", "bold");
   doc.setTextColor(15, 23, 42);
-  doc.text(formatIndiaPhoneNumber(employee.phoneNumber) || "N/A", 55, 91);
-
+  
   doc.setFont("Helvetica", "normal");
   doc.setTextColor(100, 116, 139);
   doc.text(`Pay Period:`, 110, 79);
