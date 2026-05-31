@@ -95,13 +95,36 @@ export default function HrPortal({
 
   const handleMDDirectAddHR = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast('MD add HR executed (cloud only).', 'info');
+
+    if (!mdDirectEmail || !mdDirectPass) {
+      toast('Please provide an HR email address and password.', 'error');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signUp({ email: mdDirectEmail, password: mdDirectPass });
+      if (error) throw error;
+
+      const newHr: HrUser = {
+        email: mdDirectEmail,
+        password: mdDirectPass,
+        verified: true,
+        isParentVerified: true
+      } as any;
+
+      await addDoc(collection(db, 'hr_users'), newHr);
+      toast('✓ HR account created and certified by the Director.', 'success');
+      setMdDirectEmail('');
+      setMdDirectPass('');
+    } catch (error: any) {
+      console.error('[MD HR ADD] ', error);
+      toast(error?.message || 'Failed to register HR account.', 'error');
+    }
   };
 
-  const handleDirectorApproveHR = async (phoneNumber: string) => {
+  const handleDirectorApproveHR = async (identifier: string) => {
     try {
-      const id = phoneNumber;
-      const hr = registeredHrsList.find(h => h.id === id || h.email === id || h.phoneNumber === id);
+      const hr = registeredHrsList.find(h => h.id === identifier || h.email === identifier || h.phoneNumber === identifier);
       if (!hr || !hr.id) return toast('HR user not found.', 'error');
       await updateDoc(doc(db, 'hr_users', hr.id), { verified: true });
       toast('✓ HR Approved via cloud.', 'success');
@@ -228,7 +251,7 @@ useEffect(() => {
 
   // --- Managing Director State & Tab ---
   const [activeMDTab, setActiveMDTab] = useState<'overview' | 'attendance_edit' | 'hr_approval' | 'finances' | 'recycle_bin'>('overview');
-  const [mdDirectPhone, setMdDirectPhone] = useState('');
+  const [mdDirectEmail, setMdDirectEmail] = useState('');
   const [mdDirectPass, setMdDirectPass] = useState('');
 
   // --- Form Selection / Modal States ---
@@ -293,8 +316,8 @@ useEffect(() => {
     setNewPhone(sanitizeIndiaMobileDigits(value));
   };
 
-  const handleMdDirectPhoneInputChange = (value: string) => {
-    setMdDirectPhone(sanitizeIndiaMobileDigits(value));
+  const handleMdDirectEmailInputChange = (value: string) => {
+    setMdDirectEmail(value);
   };
   // Email/password auth will use Supabase signUp / signInWithPassword flows
 
@@ -1029,7 +1052,7 @@ useEffect(() => {
                   </div>
                 )}
 
-                {/* reCAPTCHA container removed — using Supabase SMS OTP flow */}
+                {/* reCAPTCHA container removed — using Supabase email/password auth */}
 
                 <button
                   type="submit"
@@ -1792,36 +1815,31 @@ useEffect(() => {
                 <form onSubmit={handleMDDirectAddHR} className="p-5 rounded-3xl bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-800 space-y-4 max-w-xl">
                   <div className="space-y-1">
                     <h5 className="text-xs font-black uppercase text-indigo-700 dark:text-sky-400">Directly Register & Certify HR Account</h5>
-                    <p className="text-[11px] text-slate-400">Bypass cellular SMS verification constraints and register an authorized HR phone instantly.</p>
+                    <p className="text-[11px] text-slate-400">Register an HR specialist directly with email/password credentials and grant instant verification.</p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-semibold">
                     <div className="space-y-1">
-                      <label className="block text-slate-500">10-Digit Phone ID *</label>
-                      <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
-                        <span className="px-3 py-2 text-sm font-bold text-slate-700 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800 select-none">
-                          +91
-                        </span>
-                        <input
-                          type="tel"
-                          required
-                          inputMode="numeric"
-                          maxLength={10}
-                          placeholder="9845012345"
-                          value={mdDirectPhone}
-                          onChange={e => handleMdDirectPhoneInputChange(e.target.value)}
-                          className="w-full bg-transparent px-3 py-2 font-bold focus:outline-none dark:text-white"
-                        />
-                      </div>
+                      <label className="block text-slate-500">HR Email Address *</label>
+                      <input
+                        type="email"
+                        required
+                        autoComplete="email"
+                        placeholder="name@company.com"
+                        value={mdDirectEmail}
+                        onChange={e => handleMdDirectEmailInputChange(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-bold focus:outline-none"
+                      />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-slate-500">Login Passcode *</label>
+                      <label className="block text-slate-500">Login Password *</label>
                       <input
                         type="password"
                         required
-                        placeholder="Enter password..."
+                        autoComplete="new-password"
+                        placeholder="Enter a secure password..."
                         value={mdDirectPass}
                         onChange={e => setMdDirectPass(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-bold focus:outline-none dark:text-white"
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 font-bold focus:outline-none"
                       />
                     </div>
                   </div>
