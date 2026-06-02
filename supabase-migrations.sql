@@ -32,6 +32,34 @@ CREATE TABLE IF NOT EXISTS public.employees (
   updatedAt TIMESTAMP DEFAULT NOW()
 );
 
+-- 2.5 Employee Documents Table
+CREATE TABLE IF NOT EXISTS public.employee_documents (
+  id TEXT PRIMARY KEY,
+  employeeId TEXT NOT NULL REFERENCES public.employees(id),
+  docKey TEXT NOT NULL,
+  label TEXT,
+  name TEXT,
+  type TEXT,
+  data TEXT,
+  downloadUrl TEXT,
+  storagePath TEXT,
+  uploadedAt TEXT,
+  status TEXT DEFAULT 'uploaded',
+  createdAt TIMESTAMP DEFAULT NOW(),
+  updatedAt TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_employee_documents_employee ON public.employee_documents(employeeId);
+
+ALTER TABLE public.employee_documents ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow authenticated select employee documents" ON public.employee_documents
+  FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Allow authenticated insert employee documents" ON public.employee_documents
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Allow authenticated delete employee documents" ON public.employee_documents
+  FOR DELETE USING (auth.role() = 'authenticated');
+CREATE POLICY "Allow authenticated update employee documents" ON public.employee_documents
+  FOR UPDATE USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+
 -- 3. Attendance Logs Table
 CREATE TABLE IF NOT EXISTS public.attendance_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

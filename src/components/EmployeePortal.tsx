@@ -13,6 +13,8 @@ import {
 import CameraStream from './CameraStream';
 import DocumentViewer from './DocumentViewer';
 import { generatePayslipPDF } from '../lib/pdfHelper';
+import { uploadEmployeeDocument, deleteEmployeeDocument, fetchEmployeeDocuments, persistEmployeeDocument, removeEmployeeDocument } from '../lib/supabaseStorage';
+import { supabase } from '../lib/supabaseClient';
 
 interface EmployeePortalProps {
   employee: Employee;
@@ -66,6 +68,7 @@ export default function EmployeePortal({
 
   // Document Upload File Input Tracker
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+  const [isRemoteSyncing, setIsRemoteSyncing] = useState(false);
 
   // Preview Document Selector State
   const [previewDoc, setPreviewDoc] = useState<{ name: string; type: string; data: string } | null>(null);
@@ -75,15 +78,28 @@ export default function EmployeePortal({
   const [isAddingCustomDoc, setIsAddingCustomDoc] = useState(false);
 
   // Recycle Bin State
-  const [recycleBin, setRecycleBin] = useState<RecycleBinItem[]>(() => {
-    const saved = localStorage.getItem('mspl_recycle_bin');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [recycleBin, setRecycleBin] = useState<RecycleBinItem[]>([]);
 
-  // Hot Sync Recycle Bin
+  // Load recycle bin entries from Supabase for this employee
   useEffect(() => {
-    localStorage.setItem('mspl_recycle_bin', JSON.stringify(recycleBin));
-  }, [recycleBin]);
+    if (!employee?.id) return;
+
+    async function loadData() {
+      const { data, error } = await supabase
+        .from('recycle_bin')
+        .select('*')
+        .eq('user_id', employee.id);
+
+      if (error) {
+        console.warn('Failed to load recycle bin from Supabase:', error);
+        return;
+      }
+
+      setRecycleBin(data ?? []);
+    }
+
+    loadData();
+  }, [employee.id]);
 
   // Personal Payslip selection
   const employeePayslips = payslips.filter(p => p.employeeId.toUpperCase() === employee.id.toUpperCase());
@@ -91,6 +107,31 @@ export default function EmployeePortal({
   useEffect(() => {
     fetchGeolocation();
   }, []);
+
+  useEffect(() => {
+    if (!employee?.id) return;
+
+    const syncRemoteFiles = async () => {
+      setIsRemoteSyncing(true);
+      try {
+        const remoteFiles = await fetchEmployeeDocuments(employee.id);
+        const currentFiles = employee.uploadedFilesList || [];
+
+        if (JSON.stringify(remoteFiles) !== JSON.stringify(currentFiles)) {
+          onUpdateEmployee({
+            ...employee,
+            uploadedFilesList: remoteFiles
+          });
+        }
+      } catch (error) {
+        console.warn('Employee document metadata sync failed:', error);
+      } finally {
+        setIsRemoteSyncing(false);
+      }
+    };
+
+    syncRemoteFiles();
+  }, [employee.id]);
 
   const fetchGeolocation = () => {
     setGpsLoading(true);
@@ -140,17 +181,19 @@ export default function EmployeePortal({
   };
 
   // Safe file reader helper
-  const processFileUpload = (file: File, key: string, label: string) => {
+  const processFileUpload = async (file: File, key: string, label: string) => {
     setUploadProgress(key);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64Data = reader.result as string;
+
+    try {
+      const uploadResult = await uploadEmployeeDocument(employee.id, key, file);
       const newFileObj: DocumentFile = {
         key,
         label,
         name: file.name,
-        type: file.type || 'application/octet-stream',
-        data: base64Data,
+        type: file.type || uploadResult.mimeType,
+        data: uploadResult.downloadUrl,
+        downloadUrl: uploadResult.downloadUrl,
+        storagePath: uploadResult.storagePath,
         uploadedAt: new Date().toLocaleDateString('en-US'),
         status: 'uploaded'
       };
@@ -159,20 +202,24 @@ export default function EmployeePortal({
       const filtered = currentFiles.filter(f => f.key !== key);
       const updatedFiles = [...filtered, newFileObj];
 
+      const persistError = await persistEmployeeDocument(employee.id, newFileObj);
+      if (persistError) {
+        console.warn('Failed to persist employee document metadata to Supabase:', persistError);
+      }
+
       onUpdateEmployee({
         ...employee,
         [key]: 'uploaded', // Backwards compatibility legacy field
         uploadedFilesList: updatedFiles
       });
 
+      toast(`✓ Document "${label}" uploaded to cloud storage successfully.`, 'success');
+    } catch (error: any) {
+      console.error('Document upload failed', error);
+      toast(`Failed to upload "${label}" to cloud storage.`, 'error');
+    } finally {
       setUploadProgress(null);
-      toast(`✓ Document "${label}" saved and queued for HR review.`, "success");
-    };
-    reader.onerror = () => {
-      setUploadProgress(null);
-      toast("Failed to process file binary selection.", "error");
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   // Custom file upload manual handler
@@ -183,7 +230,7 @@ export default function EmployeePortal({
   };
 
   // Create custom new document slots manually
-  const handleCreateCustomDocSlot = (e: React.FormEvent) => {
+  const handleCreateCustomDocSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customDocLabel.trim()) {
       toast("Please provide a legitimate document name/label.", "error");
@@ -201,6 +248,11 @@ export default function EmployeePortal({
     };
 
     const updatedList = [...(employee.uploadedFilesList || []), newFileSlot];
+    const persistError = await persistEmployeeDocument(employee.id, newFileSlot);
+    if (persistError) {
+      console.warn('Failed to persist custom document slot to Supabase:', persistError);
+    }
+
     onUpdateEmployee({
       ...employee,
       uploadedFilesList: updatedList
@@ -212,7 +264,7 @@ export default function EmployeePortal({
   };
 
   // Deleting document -> sends to bin
-  const handleDeleteDocument = (docKey: string) => {
+  const handleDeleteDocument = async (docKey: string) => {
     const list = employee.uploadedFilesList || [];
     const targetFile = list.find(f => f.key === docKey);
     if (!targetFile) return;
@@ -233,9 +285,16 @@ export default function EmployeePortal({
       }
     };
 
+    if (targetFile.storagePath) {
+      const deleteError = await deleteEmployeeDocument(targetFile.storagePath);
+      if (deleteError) {
+        console.warn('Could not remove document from Supabase storage:', deleteError.message || deleteError);
+      }
+    }
+
     const remaining = list.filter(f => f.key !== docKey);
 
-    // Save
+    // Save local state and persist recycle bin item to Supabase
     onUpdateEmployee({
       ...employee,
       [docKey]: undefined, // clear legacy status
@@ -243,11 +302,24 @@ export default function EmployeePortal({
     });
 
     setRecycleBin(prev => [binItem, ...prev]);
-    toast(`✓ File "${targetFile.label}" moved to Recycle Bin. You can restore it anytime.`, "warning");
+    const { error: insertError } = await supabase
+      .from('recycle_bin')
+      .upsert(binItem, { onConflict: 'id' });
+
+    if (insertError) {
+      console.warn('Failed to persist recycle bin entry to Supabase:', insertError);
+    }
+
+    const deleteMetaError = await removeEmployeeDocument(employee.id, docKey);
+    if (deleteMetaError) {
+      console.warn('Failed to remove employee document metadata from Supabase:', deleteMetaError);
+    }
+
+    toast(`✓ File "${targetFile.label}" moved to Recycle Bin. You can restore it anytime.`, 'warning');
   };
 
   // Restoring document from Recycle Bin
-  const handleRestoreFromBin = (binItem: RecycleBinItem) => {
+  const handleRestoreFromBin = async (binItem: RecycleBinItem) => {
     if (!binItem.originalPath.docKey || !binItem.originalPath.logData) return;
     try {
       const restoredFile: DocumentFile = JSON.parse(binItem.originalPath.logData);
@@ -259,7 +331,21 @@ export default function EmployeePortal({
         uploadedFilesList: [...list, restoredFile]
       });
 
+      const persistError = await persistEmployeeDocument(employee.id, restoredFile);
+      if (persistError) {
+        console.warn('Failed to persist restored document metadata to Supabase:', persistError);
+      }
+
       setRecycleBin(prev => prev.filter(item => item.id !== binItem.id));
+      const { error: deleteError } = await supabase
+        .from('recycle_bin')
+        .delete()
+        .eq('id', binItem.id);
+
+      if (deleteError) {
+        console.warn('Failed to remove restored recycle bin item from Supabase:', deleteError);
+      }
+
       toast(`✓ Document "${restoredFile.label}" successfully restored from Bin!`, "success");
     } catch {
       toast("Could not parsing restored document data.", "error");
@@ -267,8 +353,17 @@ export default function EmployeePortal({
   };
 
   // Permanent Delete
-  const handlePermanentDelete = (idx: string) => {
+  const handlePermanentDelete = async (idx: string) => {
     setRecycleBin(prev => prev.filter(item => item.id !== idx));
+    const { error } = await supabase
+      .from('recycle_bin')
+      .delete()
+      .eq('id', idx);
+
+    if (error) {
+      console.warn('Failed to permanently delete recycle bin item from Supabase:', error);
+    }
+
     toast("✓ Document permanently deleted from system nodes.", "info");
   };
 
@@ -613,6 +708,12 @@ export default function EmployeePortal({
                 <p className="text-xs text-slate-500 dark:text-slate-405 mt-0.5">
                   Maintain, delete, or manually add your digital identity files. Supported: JPG, JPEG, PDF, MS Word, MS Excel, IMG formats.
                 </p>
+                {isRemoteSyncing && (
+                  <div className="mt-2 inline-flex items-center gap-2 text-[10px] font-bold text-indigo-600 dark:text-sky-400">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Syncing files from Supabase storage...
+                  </div>
+                )}
               </div>
 
               {/* Add Custom document slots input */}
